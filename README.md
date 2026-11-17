@@ -44,6 +44,7 @@ Bot Discord game tài xỉu với tiền ảo, điểm danh, thưởng chat và 
    - View Channels
    - Send Messages
    - Read Message History
+   - Manage Expressions (để bot tạo emoji mặt xúc xắc từ `src/images`)
 5. Sao chép file `.env.example` thành `.env` và điền token.
 6. Cài dependencies:
 
@@ -100,6 +101,7 @@ npm start
 - Tin nhắn kết quả mỗi phiên kèm bảng nút để đặt cược ngay cho phiên tiếp theo.
 - Bảng phiên đang mở hiển thị thời gian còn lại bằng timestamp Discord tự cập nhật, không gửi tin nhắn liên tục.
 - Trạng thái phiên và kết quả được hiển thị trong Embed, các nút thao tác nằm bên dưới và thông tin quan trọng được in đậm.
+- Sáu ảnh mặt xúc xắc được đăng ký thành custom emoji `xuc_xac_1` đến `xuc_xac_6` trong server và dùng trực tiếp ở kết quả.
 - `!gift` chuyển xu từ bạn sang người được nhắc đến.
 - `!xin` tạo yêu cầu xin xu với embed đếm ngược và nút Đồng ý/Từ chối; lệnh `!dongy` và `!tuchoi` vẫn còn để dự phòng.
 - Nếu muốn, có thể mở rộng tiếp sang slash commands hoặc thêm bảng xếp hạng.

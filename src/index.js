@@ -12,6 +12,8 @@ const {
   TextInputBuilder,
   TextInputStyle
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 const { slashCommands } = require('./commands');
 const { loadState, getGuildStateSnapshot, updateGuildState } = require('./storage');
@@ -31,6 +33,9 @@ const client = new Client({
 });
 
 const roundTimers = new Map();
+const diceImagesDirectory = path.join(__dirname, 'images');
+const diceEmojiCache = new Map();
+const diceEmojiUnavailableGuilds = new Set();
 
 async function registerSlashCommands() {
   if (!config.clientId) {
@@ -413,6 +418,7 @@ function formatRemainingSeconds(closeAt) {
 
 function buildRoundResultEmbed(summary) {
   const resultColor = summary.result === 'tai' ? 0x2ECC71 : 0xE74C3C;
+  const diceDisplay = summary.diceEmojis?.join(' ') ?? formatDice(summary.dice);
   const playerResults = summary.bets.map((bet) => {
     const outcome = bet.win ? '✅ **Thắng**' : '❌ **Thua**';
     const net = `${bet.net >= 0 ? '+' : '-'}${formatBalance(Math.abs(bet.net))}`;
@@ -427,7 +433,7 @@ function buildRoundResultEmbed(summary) {
   return new EmbedBuilder()
     .setColor(resultColor)
     .setTitle(`🎲 Phiên #${summary.roundId} đã chốt`)
-    .setDescription(`Kết quả: **${formatDice(summary.dice)} = ${summary.total} → ${formatSide(summary.result)}**`)
+    .setDescription(`Kết quả: **${diceDisplay} = ${summary.total} → ${formatSide(summary.result)}**`)
     .addFields(
       { name: 'Số người tham gia', value: `**${summary.participantCount} người**`, inline: true },
       { name: 'Tổng cược', value: `**${formatBalance(summary.totalBet)}**`, inline: true },
@@ -435,6 +441,51 @@ function buildRoundResultEmbed(summary) {
       { name: 'Chi tiết người chơi', value: playerResultText || 'Không có dữ liệu cược.', inline: false }
     )
     .setFooter({ text: 'Bấm nút bên dưới để tham gia phiên tiếp theo.' });
+}
+
+async function ensureDiceEmojis(guild) {
+  if (diceEmojiUnavailableGuilds.has(guild.id)) {
+    return diceEmojiCache.get(guild.id) ?? new Map();
+  }
+
+  const cachedEmojis = diceEmojiCache.get(guild.id) ?? new Map();
+
+  for (let value = 1; value <= 6; value += 1) {
+    const emojiName = `xuc_xac_${value}`;
+    const existingEmoji = guild.emojis.cache.find((emoji) => emoji.name === emojiName);
+
+    if (existingEmoji) {
+      cachedEmojis.set(value, existingEmoji.toString());
+      continue;
+    }
+
+    const filePath = path.join(diceImagesDirectory, `mat_${value}.png`);
+    if (!fs.existsSync(filePath)) {
+      console.warn(`Missing dice face image: ${filePath}`);
+      continue;
+    }
+
+    try {
+      const createdEmoji = await guild.emojis.create({
+        attachment: filePath,
+        name: emojiName,
+        reason: 'Tạo emoji mặt xúc xắc cho bot Tài Xỉu'
+      });
+      cachedEmojis.set(value, createdEmoji.toString());
+      console.log(`Created dice emoji ${emojiName} for guild ${guild.id}.`);
+    } catch (error) {
+      if (error?.code === 50013) {
+        diceEmojiUnavailableGuilds.add(guild.id);
+        console.warn(`Guild ${guild.id} lacks Manage Expressions; using text dice fallback.`);
+        break;
+      }
+
+      console.error(`Failed to create dice emoji ${emojiName} for guild ${guild.id}: ${error.message}`);
+    }
+  }
+
+  diceEmojiCache.set(guild.id, cachedEmojis);
+  return cachedEmojis;
 }
 
 function formatHistoryEntry(entry, index) {
@@ -469,17 +520,33 @@ async function sendRoundResult(channelId, summary) {
     }
   };
 
+  let resultMessage = null;
+  const guild = client.guilds.cache.get(summary.guildId);
+  if (guild) {
+    const diceEmojis = await ensureDiceEmojis(guild);
+    summary.diceEmojis = summary.dice.map((value) => diceEmojis.get(value) ?? `🎲${value}`);
+  }
+
+  resultPayload.embeds = [buildRoundResultEmbed(summary)];
+
   if (summary.statusMessageId && channel.messages?.fetch) {
     const panelMessage = await channel.messages.fetch(summary.statusMessageId).catch(() => null);
     if (panelMessage) {
-      await panelMessage.edit(resultPayload);
-      return;
+      resultMessage = panelMessage;
     }
   }
 
-  await channel.send({
-    ...resultPayload
-  });
+  if (!resultMessage) {
+    await channel.send(resultPayload);
+    return;
+  }
+
+  try {
+    await resultMessage.edit(resultPayload);
+  } catch (error) {
+    console.error(`Failed to update dice result message for guild channel ${channelId}:`, error);
+    await channel.send(resultPayload);
+  }
 }
 
 async function resolveRound(guildId, reason = 'timer') {
@@ -522,6 +589,7 @@ async function resolveRound(guildId, reason = 'timer') {
     });
 
     summary = {
+      guildId,
       roundId: Number(round.id),
       openedAt: round.openedAt,
       closedAt: new Date().toISOString(),
@@ -1238,11 +1306,16 @@ async function handleBetModalInteraction(interaction) {
   return true;
 }
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   registerSlashCommands().catch((error) => {
     console.error('Failed to register slash commands:', error);
   });
+
+  for (const guild of client.guilds.cache.values()) {
+    await ensureDiceEmojis(guild);
+  }
+
   rehydrateRoundSchedulers();
 });
 
